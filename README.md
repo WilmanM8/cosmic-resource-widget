@@ -1,6 +1,8 @@
 # COSMIC Resource Monitor
 <img width="358" height="342" alt="imagen" src="https://github.com/user-attachments/assets/793f94e3-dddd-4131-a59e-2df374c6a776" />
+
 <img width="501" height="690" alt="imagen" src="https://github.com/user-attachments/assets/a4627a5f-f1aa-4afd-b82e-f92e567445d5" />
+
 <img width="501" height="690" alt="imagen" src="https://github.com/user-attachments/assets/79e8437e-20b8-4310-8463-5ed7d0fb7733" />
 
 Este es un widget de escritorio circular para sistemas Linux, diseñado para mostrar el consumo y temperatura de CPU, memoria RAM y GPU en tiempo real. 
