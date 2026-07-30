@@ -117,18 +117,74 @@ class ResourceCircle(Gtk.DrawingArea):
             end = start + dash_angle
 
             if i < lit:
-                # Segmento activo
-                cr.set_source_rgba(fg_rgb[0], fg_rgb[1], fg_rgb[2], 0.9)
+                # Glow LED: 3 capas expandiéndose con opacidad decreciente
+                cr.set_line_cap(cairo.LINE_CAP_ROUND)
+                for glow_w, glow_a in [(ring_width + 16, 0.06), (ring_width + 10, 0.10), (ring_width + 4, 0.18)]:
+                    cr.set_line_width(glow_w)
+                    cr.set_source_rgba(fg_rgb[0], fg_rgb[1], fg_rgb[2], glow_a)
+                    cr.arc(center_x, center_y, radius, start, end)
+                    cr.stroke()
+                # Segmento activo sólido
+                cr.set_line_cap(cairo.LINE_CAP_BUTT)
+                cr.set_line_width(ring_width)
+                cr.set_source_rgba(fg_rgb[0], fg_rgb[1], fg_rgb[2], 0.95)
+                cr.arc(center_x, center_y, radius, start, end)
+                cr.stroke()
             else:
                 # Segmento inactivo
                 cr.set_source_rgba(bg_rgb[0], bg_rgb[1], bg_rgb[2], 0.5)
+                cr.arc(center_x, center_y, radius, start, end)
+                cr.stroke()
 
-            cr.arc(center_x, center_y, radius, start, end)
+        # --- Vidrio Esmerilado ---
+        inner_radius = radius - ring_width / 2.0
+
+        cr.save()
+        cr.arc(center_x, center_y, inner_radius, 0, 2 * math.pi)
+        cr.clip()
+
+        # Base opaca oscura (el vidrio esmerilado casi no deja ver a través)
+        cr.set_source_rgba(0.10, 0.10, 0.13, 0.82)
+        cr.paint()
+
+        # Micro-textura fina: líneas horizontales muy sutiles (simula las
+        # estrías del vidrio esmerilado real)
+        import random
+        rng = random.Random(hash(self.label) + 42)
+        y = center_y - inner_radius
+        step = 1.5
+        while y < center_y + inner_radius:
+            alpha = rng.uniform(0.02, 0.07)
+            cr.set_source_rgba(1.0, 1.0, 1.0, alpha)
+            cr.set_line_width(rng.uniform(0.3, 1.2))
+            x_off = rng.uniform(-2, 2)
+            cr.move_to(center_x - inner_radius + x_off, y)
+            cr.line_to(center_x + inner_radius + x_off, y)
             cr.stroke()
+            y += step
+
+        # Variaciones verticales más espaciadas para romper la uniformidad
+        x = center_x - inner_radius
+        step_v = 3.0
+        while x < center_x + inner_radius:
+            alpha = rng.uniform(0.01, 0.04)
+            cr.set_source_rgba(1.0, 1.0, 1.0, alpha)
+            cr.set_line_width(rng.uniform(0.3, 0.8))
+            y_off = rng.uniform(-1, 1)
+            cr.move_to(x, center_y - inner_radius + y_off)
+            cr.line_to(x, center_y + inner_radius + y_off)
+            cr.stroke()
+            x += step_v
+
+        cr.restore()
+
+        # Borde sutil
+        cr.arc(center_x, center_y, inner_radius, 0, 2 * math.pi)
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.06)
+        cr.set_line_width(0.8)
+        cr.stroke()
 
         # --- Texto dentro del círculo ---
-        # El radio interno disponible para texto
-        inner_radius = radius - ring_width / 2.0
         # Usamos el diámetro del cuadrado inscrito en el círculo interno
         usable_size = inner_radius * math.sqrt(2)
 
@@ -319,17 +375,12 @@ class ResourceWidget(Gtk.Window):
     def on_button_press(self, widget, event):
         if event.button == 1:
             self.dragging = True
-            # Detectar si estamos bajo Wayland para usar el modo de arrastre relativo
             self.is_wayland = "wayland" in os.environ.get("XDG_SESSION_TYPE", "").lower() or "WAYLAND_DISPLAY" in os.environ
-            
-            if self.is_wayland:
-                self.start_x = event.x
-                self.start_y = event.y
-            else:
-                self.start_x = event.x_root
-                self.start_y = event.y_root
-                self.start_margin_x = self.margin_x
-                self.start_margin_y = self.margin_y
+            # Guardar posición inicial y márgenes en AMBOS modos
+            self.start_x = event.x if self.is_wayland else event.x_root
+            self.start_y = event.y if self.is_wayland else event.y_root
+            self.start_margin_x = self.margin_x
+            self.start_margin_y = self.margin_y
         elif event.button == 3:
             self.show_context_menu(event)
         return True
@@ -356,21 +407,16 @@ class ResourceWidget(Gtk.Window):
 
     def on_motion_notify(self, widget, event):
         if getattr(self, 'dragging', False):
+            # Mismo cálculo para ambos: margen_inicio + delta desde el click
             if getattr(self, 'is_wayland', False):
-                # Arrastre relativo para Wayland (donde x_root/y_root no son globales)
                 dx = event.x - self.start_x
                 dy = event.y - self.start_y
-                self.margin_x = int(self.margin_x + dx)
-                self.margin_y = int(self.margin_y + dy)
             else:
-                # Arrastre absoluto para X11
                 dx = event.x_root - self.start_x
                 dy = event.y_root - self.start_y
-                self.margin_x = int(self.start_margin_x + dx)
-                self.margin_y = int(self.start_margin_y + dy)
 
-            if self.margin_x < 0: self.margin_x = 0
-            if self.margin_y < 0: self.margin_y = 0
+            self.margin_x = max(0, int(self.start_margin_x + dx))
+            self.margin_y = max(0, int(self.start_margin_y + dy))
 
             GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, self.margin_x)
             GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, self.margin_y)
