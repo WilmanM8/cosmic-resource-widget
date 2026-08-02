@@ -196,6 +196,7 @@ class ConfigApp(Gtk.Window):
 
     def on_close_widget(self, button):
         os.system("pkill -f resource_widget.py")
+        os.system("pkill -f cosmic-resource-widget-rs")
 
     def apply_css(self):
         try:

@@ -136,45 +136,16 @@ class ResourceCircle(Gtk.DrawingArea):
                 cr.arc(center_x, center_y, radius, start, end)
                 cr.stroke()
 
-        # --- Vidrio Esmerilado ---
+        # --- Fondo Borroso (Blur) ---
         inner_radius = radius - ring_width / 2.0
 
         cr.save()
         cr.arc(center_x, center_y, inner_radius, 0, 2 * math.pi)
         cr.clip()
 
-        # Base opaca oscura (el vidrio esmerilado casi no deja ver a través)
-        cr.set_source_rgba(0.10, 0.10, 0.13, 0.82)
+        # Base semitransparente para que el compositor (Wayland) pueda aplicar el blur
+        cr.set_source_rgba(0.10, 0.10, 0.13, 0.40)
         cr.paint()
-
-        # Micro-textura fina: líneas horizontales muy sutiles (simula las
-        # estrías del vidrio esmerilado real)
-        import random
-        rng = random.Random(hash(self.label) + 42)
-        y = center_y - inner_radius
-        step = 1.5
-        while y < center_y + inner_radius:
-            alpha = rng.uniform(0.02, 0.07)
-            cr.set_source_rgba(1.0, 1.0, 1.0, alpha)
-            cr.set_line_width(rng.uniform(0.3, 1.2))
-            x_off = rng.uniform(-2, 2)
-            cr.move_to(center_x - inner_radius + x_off, y)
-            cr.line_to(center_x + inner_radius + x_off, y)
-            cr.stroke()
-            y += step
-
-        # Variaciones verticales más espaciadas para romper la uniformidad
-        x = center_x - inner_radius
-        step_v = 3.0
-        while x < center_x + inner_radius:
-            alpha = rng.uniform(0.01, 0.04)
-            cr.set_source_rgba(1.0, 1.0, 1.0, alpha)
-            cr.set_line_width(rng.uniform(0.3, 0.8))
-            y_off = rng.uniform(-1, 1)
-            cr.move_to(x, center_y - inner_radius + y_off)
-            cr.line_to(x, center_y + inner_radius + y_off)
-            cr.stroke()
-            x += step_v
 
         cr.restore()
 
@@ -263,21 +234,35 @@ class ResourceWidget(Gtk.Window):
         self.set_visual(self.get_screen().get_rgba_visual())
         self.set_app_paintable(True)
 
-        GtkLayerShell.init_for_window(self)
-        GtkLayerShell.set_layer(self, GtkLayerShell.Layer.BOTTOM)
-        GtkLayerShell.set_namespace(self, "resource_widget")
-
-        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, True)
-        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
-        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.BOTTOM, False)
-        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, False)
-
         self.config = load_config()
         self.margin_x = self.config.get("margin_x", 50)
         self.margin_y = self.config.get("margin_y", 50)
 
-        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, self.margin_x)
-        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, self.margin_y)
+        # Determinar si estamos en Wayland mediante GtkLayerShell
+        self.is_wayland = GtkLayerShell.is_supported()
+
+        if self.is_wayland:
+            GtkLayerShell.init_for_window(self)
+            GtkLayerShell.set_layer(self, GtkLayerShell.Layer.BOTTOM)
+            GtkLayerShell.set_namespace(self, "resource_widget")
+
+            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, True)
+            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
+            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.BOTTOM, False)
+            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, False)
+
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, self.margin_x)
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, self.margin_y)
+        else:
+            # Fallback para X11 (Pop!_OS por defecto, etc.)
+            self.set_type_hint(Gdk.WindowTypeHint.NORMAL)
+            self.set_keep_below(True)
+            self.set_decorated(False)
+            self.set_skip_taskbar_hint(True)
+            self.set_skip_pager_hint(True)
+            self.set_accept_focus(False)
+            self.stick()  # Lo mantiene en todos los escritorios virtuales (desklet real)
+            self.move(self.margin_x, self.margin_y)
 
         # Soporte para arrastrar (Botón izquierdo = arrastrar, Botón derecho = menú)
         self.add_events(
@@ -375,10 +360,9 @@ class ResourceWidget(Gtk.Window):
     def on_button_press(self, widget, event):
         if event.button == 1:
             self.dragging = True
-            self.is_wayland = "wayland" in os.environ.get("XDG_SESSION_TYPE", "").lower() or "WAYLAND_DISPLAY" in os.environ
-            # Guardar posición inicial y márgenes en AMBOS modos
-            self.start_x = event.x if self.is_wayland else event.x_root
-            self.start_y = event.y if self.is_wayland else event.y_root
+            # Usar is_wayland guardado en __init__
+            self.start_x = event.x if getattr(self, 'is_wayland', False) else event.x_root
+            self.start_y = event.y if getattr(self, 'is_wayland', False) else event.y_root
             self.start_margin_x = self.margin_x
             self.start_margin_y = self.margin_y
         elif event.button == 3:
@@ -418,8 +402,11 @@ class ResourceWidget(Gtk.Window):
             self.margin_x = max(0, int(self.start_margin_x + dx))
             self.margin_y = max(0, int(self.start_margin_y + dy))
 
-            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, self.margin_x)
-            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, self.margin_y)
+            if getattr(self, 'is_wayland', False):
+                GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, self.margin_x)
+                GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, self.margin_y)
+            else:
+                self.move(self.margin_x, self.margin_y)
         return True
 
 if __name__ == '__main__':
